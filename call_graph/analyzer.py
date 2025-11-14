@@ -219,22 +219,47 @@ class CallGraphAnalyzer:
         lines = ["digraph CallGraph {"]
         lines.append("  rankdir=LR;")
         lines.append("  node [shape=box];")
+        lines.append('  graph [fontname="Arial", fontsize=10];')
+        lines.append('  node [fontname="Arial", fontsize=9];')
+        lines.append('  edge [fontname="Arial", fontsize=8];')
 
         # 添加所有函数节点
         symbols = self.db.get_symbols_by_kind("function")
+        valid_node_ids = set()
         for symbol in symbols:
             node_id = symbol["id"]
-            label = f"{symbol['name']}\\n({symbol['file']})"
+            valid_node_ids.add(node_id)
+            # 转义特殊字符
+            name = symbol["name"].replace('"', '\\"')
+            file_path = symbol["file"].replace('"', '\\"')
+            label = f"{name}\\n({file_path}:{symbol.get('start_line', '?')})"
             lines.append(f'  "{node_id}" [label="{label}"];')
 
-        # 添加调用边
+        # 添加调用边（只添加有效的边）
         cursor = self.db.conn.cursor()
-        cursor.execute("SELECT * FROM call_relations")
+        cursor.execute(
+            """
+            SELECT caller_id, callee_id, caller_name, callee_name 
+            FROM call_relations 
+            WHERE caller_id IS NOT NULL AND callee_id IS NOT NULL
+        """
+        )
+        edge_count = 0
         for row in cursor.fetchall():
-            lines.append(f'  "{row["caller_id"]}" -> "{row["callee_id"]}";')
+            caller_id = row["caller_id"]
+            callee_id = row["callee_id"]
+            # 只添加两端节点都存在的边
+            if caller_id in valid_node_ids and callee_id in valid_node_ids:
+                lines.append(f'  "{caller_id}" -> "{callee_id}";')
+                edge_count += 1
 
         lines.append("}")
-        return "\n".join(lines)
+
+        # 返回结果，包含统计信息作为注释
+        result = "\n".join(lines)
+        print(f"导出成功: {len(valid_node_ids)} 个节点, {edge_count} 条边")
+
+        return result
 
     def close(self):
         """关闭分析器"""
