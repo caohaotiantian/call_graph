@@ -8,8 +8,8 @@ Call Graph 工具启动脚本
     python call-graph.py --help
 """
 
-import sys
 import os
+import sys
 
 # 将当前目录添加到 Python 路径
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

@@ -16,12 +16,5 @@ dependencies = [
     "tree-sitter-go>=0.21.0",
 ]
 
-[project.scripts]
-call-graph = "call_graph.main:main"
-
 [tool.uv]
 package = true
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
