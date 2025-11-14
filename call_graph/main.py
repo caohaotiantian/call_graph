@@ -8,30 +8,52 @@ import json
 # 支持相对导入和直接运行
 try:
     from .analyzer import CallGraphAnalyzer
+    from .analyzer_optimized import CallGraphAnalyzerOptimized
     from .database import CallGraphDB
 except ImportError:
     from analyzer import CallGraphAnalyzer
+    from analyzer_optimized import CallGraphAnalyzerOptimized
     from database import CallGraphDB
 
 
 def cmd_analyze(args):
     """分析项目命令"""
-    analyzer = CallGraphAnalyzer(args.database)
+    # 根据参数选择分析器
+    if hasattr(args, 'fast') and args.fast:
+        workers = args.workers if hasattr(args, 'workers') else None
+        analyzer = CallGraphAnalyzerOptimized(
+            args.database, 
+            num_workers=workers
+        )
+        print(f"使用性能优化模式（多进程并行处理）")
+    else:
+        analyzer = CallGraphAnalyzer(args.database)
     
     try:
         if args.clear:
             print("清空现有数据...")
             analyzer.db.clear_all()
         
-        stats = analyzer.analyze_project(
-            args.project_path,
-            exclude_dirs=args.exclude.split(',') if args.exclude else None
-        )
+        if hasattr(args, 'fast') and args.fast:
+            batch_size = args.batch_size if hasattr(args, 'batch_size') else 100
+            stats = analyzer.analyze_project(
+                args.project_path,
+                exclude_dirs=args.exclude.split(',') if args.exclude else None,
+                batch_size=batch_size,
+                show_progress=True
+            )
+        else:
+            stats = analyzer.analyze_project(
+                args.project_path,
+                exclude_dirs=args.exclude.split(',') if args.exclude else None
+            )
         
-        print("\n" + "="*50)
-        print("分析统计:")
-        print("="*50)
-        print(json.dumps(stats, indent=2, ensure_ascii=False))
+        if not (hasattr(args, 'fast') and args.fast):
+            # 优化版本已经打印了详细统计，这里只打印普通版本的
+            print("\n" + "="*50)
+            print("分析统计:")
+            print("="*50)
+            print(json.dumps(stats, indent=2, ensure_ascii=False))
         
     finally:
         analyzer.close()
@@ -212,6 +234,12 @@ def main():
   # 分析项目（清空旧数据）
   python call-graph.py --database myproject.db analyze /path/to/project --clear
   
+  # 分析项目（使用性能优化模式，适合大型项目）⚡
+  python call-graph.py --database myproject.db analyze /path/to/project --clear --fast
+  
+  # 性能优化模式（自定义参数）
+  python call-graph.py --database myproject.db analyze /path/to/project --clear --fast --workers 8 --batch-size 200
+  
   # 分析项目（排除特定目录）
   python call-graph.py --database myproject.db analyze /path/to/project --exclude "node_modules,build"
   
@@ -275,6 +303,12 @@ def main():
                                help='要排除的目录，用逗号分隔')
     analyze_parser.add_argument('--clear', '-c', action='store_true',
                                help='清空现有数据')
+    analyze_parser.add_argument('--fast', '-f', action='store_true',
+                               help='使用性能优化模式（多进程+批量操作）')
+    analyze_parser.add_argument('--workers', '-w', type=int, default=None,
+                               help='工作进程数（默认：CPU核心数-1）')
+    analyze_parser.add_argument('--batch-size', '-b', type=int, default=100,
+                               help='批量插入数据库的大小（默认：100）')
     
     # query命令
     query_parser = subparsers.add_parser('query', help='查询调用关系')

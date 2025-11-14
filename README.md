@@ -49,12 +49,22 @@ pip install -e .
 ### 1. 分析项目
 
 ```bash
-# 分析整个项目
+# 小型项目 - 标准模式
 python call-graph.py --database myproject.db analyze /path/to/your/project --clear
+
+# 大型项目 - 性能优化模式 ⚡（推荐）
+python call-graph.py --database myproject.db analyze /path/to/your/project --clear --fast
+
+# 性能优化模式（自定义参数）
+python call-graph.py --database myproject.db analyze /path/to/your/project --clear --fast --workers 8 --batch-size 200
 
 # 排除特定目录
 python call-graph.py --database myproject.db analyze /path/to/your/project --exclude "node_modules,build,dist"
 ```
+
+**性能提示**: 
+- 对于 2000+ 文件的项目，使用 `--fast` 可获得 **5-7倍** 性能提升
+- 详见 [性能优化指南](性能优化指南.md) 或 [快速开始-性能优化版](快速开始-性能优化版.md)
 
 ### 2. 查询调用关系
 
