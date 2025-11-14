@@ -20,19 +20,21 @@ wheels/
 .installed.cfg
 *.egg
 
-# Virtual Environment
+# Virtual environments
 venv/
-ENV/
 env/
+ENV/
+.venv
 
-# IDE
+# IDEs
 .vscode/
 .idea/
 *.swp
 *.swo
 *~
+.DS_Store
 
-# Database
+# Database files
 *.db
 *.sqlite
 *.sqlite3
@@ -40,11 +42,20 @@ env/
 # Logs
 *.log
 
-# OS
-.DS_Store
-Thumbs.db
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Distribution
+*.whl
 
 # Project specific
 call_graph.db
+example.db
+*.dot
+*.png
+*.svg
 
-
+# Keep run script
+!run.sh

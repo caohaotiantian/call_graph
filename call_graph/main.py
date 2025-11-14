@@ -1,0 +1,332 @@
+"""
+主程序和CLI接口
+"""
+import argparse
+import sys
+import json
+
+# 支持相对导入和直接运行
+try:
+    from .analyzer import CallGraphAnalyzer
+    from .database import CallGraphDB
+except ImportError:
+    from analyzer import CallGraphAnalyzer
+    from database import CallGraphDB
+
+
+def cmd_analyze(args):
+    """分析项目命令"""
+    analyzer = CallGraphAnalyzer(args.database)
+    
+    try:
+        if args.clear:
+            print("清空现有数据...")
+            analyzer.db.clear_all()
+        
+        stats = analyzer.analyze_project(
+            args.project_path,
+            exclude_dirs=args.exclude.split(',') if args.exclude else None
+        )
+        
+        print("\n" + "="*50)
+        print("分析统计:")
+        print("="*50)
+        print(json.dumps(stats, indent=2, ensure_ascii=False))
+        
+    finally:
+        analyzer.close()
+
+
+def cmd_query(args):
+    """查询命令"""
+    db = CallGraphDB(args.database)
+    
+    try:
+        if args.callers:
+            # 查询调用者
+            print(f"\n查询调用 '{args.function}' 的所有函数:\n")
+            results = db.get_callers(args.function)
+            
+            if not results:
+                print(f"没有找到调用 '{args.function}' 的函数")
+            else:
+                for i, rel in enumerate(results, 1):
+                    print(f"{i}. {rel['caller_name']} ({rel['caller_file']}:{rel['call_site_line']})")
+        
+        elif args.callees:
+            # 查询被调用者
+            print(f"\n'{args.function}' 调用的所有函数:\n")
+            results = db.get_callees(args.function)
+            
+            if not results:
+                print(f"'{args.function}' 没有调用其他函数")
+            else:
+                for i, rel in enumerate(results, 1):
+                    print(f"{i}. {rel['callee_name']} ({rel['callee_file'] or 'external'})")
+        
+        elif args.chain:
+            # 查询调用链
+            print(f"\n'{args.function}' 的调用链 (深度={args.depth}):\n")
+            chains = db.get_call_chain(args.function, args.depth)
+            
+            if not chains:
+                print(f"没有找到 '{args.function}' 的调用链")
+            else:
+                for i, chain in enumerate(chains, 1):
+                    print(f"{i}. {' -> '.join(chain)}")
+        
+        elif args.fullpath:
+            # 查询完整调用路径
+            print(f"\n查询 '{args.function}' 的完整调用路径 (最大深度={args.depth}):\n")
+            result = db.get_full_call_paths(args.function, args.depth)
+            
+            if result['full_count'] == 0:
+                print(f"没有找到包含 '{args.function}' 的调用路径")
+            else:
+                print(f"目标函数: {result['target_function']}")
+                print(f"找到 {result['full_count']} 条完整调用路径\n")
+                
+                # 直接显示完整路径（带详细信息）
+                print("="*80)
+                print("完整调用路径（入口 -> 目标 -> 叶子）:")
+                print("="*80)
+                
+                for i, detailed_path in enumerate(result['full_paths_detailed'], 1):
+                    # 构建路径字符串
+                    path_parts = []
+                    for func_info in detailed_path:
+                        # 高亮目标函数
+                        if func_info['name'] == args.function:
+                            path_parts.append(f"[{func_info['display']}]")
+                        else:
+                            path_parts.append(func_info['display'])
+                    
+                    path_str = ' -> '.join(path_parts)
+                    print(f"{i}. {path_str}")
+                
+                # 显示截断警告（如果有）
+                if result.get('truncated', False):
+                    print(f"\n⚠️  警告: 路径数量过多，已限制为 {result['max_paths']} 条")
+                    print("   提示: 可以使用 --depth 参数增加搜索深度限制来减少路径数量")
+                
+                # 如果是 verbose 模式，显示额外的统计信息
+                if args.verbose:
+                    print("\n" + "="*80)
+                    print("统计信息:")
+                    print("="*80)
+                    print(f"从入口到目标的不同路径: {result['root_count']} 条")
+                    print(f"从目标到叶子的不同路径: {result['leaf_count']} 条")
+                    print(f"完整路径总数: {result['full_count']} 条")
+                    
+                    if 'performance' in result:
+                        perf = result['performance']
+                        print("\n性能信息:")
+                        print(f"  总查询时间: {perf['total_time']}秒")
+                        print(f"  详细信息构建时间: {perf['detail_time']}秒")
+                        print(f"  涉及的唯一函数数: {perf['unique_functions']}")
+                        if result.get('truncated', False):
+                            print(f"  已截断: 是（达到 {result['max_paths']} 条限制）")
+        
+        else:
+            print("请指定查询类型: --callers, --callees, --chain, 或 --fullpath")
+            sys.exit(1)
+    
+    finally:
+        db.close()
+
+
+def cmd_search(args):
+    """搜索命令"""
+    db = CallGraphDB(args.database)
+    
+    try:
+        print(f"\n搜索符号 '{args.pattern}':\n")
+        results = db.search_symbols(args.pattern)
+        
+        if not results:
+            print(f"没有找到匹配 '{args.pattern}' 的符号")
+        else:
+            for i, symbol in enumerate(results, 1):
+                print(f"{i}. {symbol['name']} ({symbol['kind']}) - {symbol['file']}:{symbol['start_line']}")
+                if args.verbose:
+                    print(f"   签名: {symbol['signature']}")
+                    print()
+    
+    finally:
+        db.close()
+
+
+def cmd_stats(args):
+    """统计命令"""
+    db = CallGraphDB(args.database)
+    
+    try:
+        stats = db.get_statistics()
+        
+        print("\n" + "="*50)
+        print("数据库统计信息")
+        print("="*50)
+        print(f"\n总符号数: {stats['total_symbols']}")
+        print(f"总调用关系: {stats['total_relations']}")
+        
+        print("\n按语言统计:")
+        for lang, count in sorted(stats['by_language'].items()):
+            print(f"  {lang:15s}: {count:6d} 个符号")
+        
+        print("\n按类型统计:")
+        for kind, count in sorted(stats['by_kind'].items()):
+            print(f"  {kind:15s}: {count:6d} 个")
+    
+    finally:
+        db.close()
+
+
+def cmd_export(args):
+    """导出命令"""
+    analyzer = CallGraphAnalyzer(args.database)
+    
+    try:
+        print(f"导出调用图为 {args.format} 格式...")
+        
+        content = analyzer.export_graph(args.format)
+        
+        if args.output:
+            with open(args.output, 'w', encoding='utf-8') as f:
+                f.write(content)
+            print(f"已保存到: {args.output}")
+        else:
+            print(content)
+    
+    finally:
+        analyzer.close()
+
+
+def main():
+    """主函数"""
+    parser = argparse.ArgumentParser(
+        description='多语言函数调用关系分析工具',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+使用示例:
+
+  # 分析项目（清空旧数据）
+  python call-graph.py --database myproject.db analyze /path/to/project --clear
+  
+  # 分析项目（排除特定目录）
+  python call-graph.py --database myproject.db analyze /path/to/project --exclude "node_modules,build"
+  
+  # 查看统计信息
+  python call-graph.py --database myproject.db stats
+  
+  # 查询谁调用了某个函数
+  python call-graph.py --database myproject.db query main --callers
+  
+  # 查询某个函数调用了哪些函数
+  python call-graph.py --database myproject.db query process_data --callees
+  
+  # 查询调用链（向下）
+  python call-graph.py --database myproject.db query main --chain --depth 3
+  
+  # 查询完整调用路径（向上+向下）
+  python call-graph.py --database myproject.db query process_data --fullpath
+  
+  # 查询完整路径并显示详细信息
+  python call-graph.py --database myproject.db query validate_input --fullpath --verbose
+  
+  # 搜索函数（模糊匹配）
+  python call-graph.py --database myproject.db search "process"
+  
+  # 搜索函数（显示详细信息）
+  python call-graph.py --database myproject.db search "calculate" --verbose
+  
+  # 导出调用图为 DOT 格式
+  python call-graph.py --database myproject.db export --output graph.dot
+  
+  # 使用 Graphviz 生成可视化图片
+  dot -Tpng graph.dot -o graph.png
+
+安装依赖:
+  pip install -e .
+
+注意：
+  1. --database 参数必须放在子命令之前
+  2. 首次使用需要先安装依赖（见上方）
+  3. 首次分析建议使用 --clear 清空旧数据
+  4. 默认排除 node_modules, .git, __pycache__ 等目录
+  
+其他运行方式：
+  # 使用 Python 模块方式
+  python -m call_graph --database myproject.db stats
+  
+  # 如果已安装到系统（推荐日常使用）
+  call-graph --database myproject.db stats
+        """
+    )
+    
+    parser.add_argument('--database', '-d', default='call_graph.db',
+                       help='数据库文件路径 (默认: call_graph.db)')
+    
+    subparsers = parser.add_subparsers(dest='command', help='子命令')
+    
+    # analyze命令
+    analyze_parser = subparsers.add_parser('analyze', help='分析项目')
+    analyze_parser.add_argument('project_path', help='项目路径')
+    analyze_parser.add_argument('--exclude', '-e',
+                               help='要排除的目录，用逗号分隔')
+    analyze_parser.add_argument('--clear', '-c', action='store_true',
+                               help='清空现有数据')
+    
+    # query命令
+    query_parser = subparsers.add_parser('query', help='查询调用关系')
+    query_parser.add_argument('function', help='函数名称')
+    query_parser.add_argument('--callers', action='store_true',
+                             help='查询谁调用了这个函数')
+    query_parser.add_argument('--callees', action='store_true',
+                             help='查询这个函数调用了谁')
+    query_parser.add_argument('--chain', action='store_true',
+                             help='查询调用链（向下）')
+    query_parser.add_argument('--fullpath', action='store_true',
+                             help='查询完整调用路径（向上追溯到入口，向下追溯到叶子）')
+    query_parser.add_argument('--depth', type=int, default=10,
+                             help='最大搜索深度 (默认: 10)')
+    query_parser.add_argument('--verbose', '-v', action='store_true',
+                             help='显示详细信息（包括完整路径）')
+    
+    # search命令
+    search_parser = subparsers.add_parser('search', help='搜索符号')
+    search_parser.add_argument('pattern', help='搜索模式')
+    search_parser.add_argument('--verbose', '-v', action='store_true',
+                              help='显示详细信息')
+    
+    # stats命令
+    subparsers.add_parser('stats', help='显示统计信息')
+    
+    # export命令
+    export_parser = subparsers.add_parser('export', help='导出调用图')
+    export_parser.add_argument('--format', '-f', default='dot',
+                              choices=['dot'], help='导出格式 (默认: dot)')
+    export_parser.add_argument('--output', '-o',
+                              help='输出文件路径')
+    
+    args = parser.parse_args()
+    
+    if not args.command:
+        parser.print_help()
+        sys.exit(1)
+    
+    # 执行对应的命令
+    if args.command == 'analyze':
+        cmd_analyze(args)
+    elif args.command == 'query':
+        cmd_query(args)
+    elif args.command == 'search':
+        cmd_search(args)
+    elif args.command == 'stats':
+        cmd_stats(args)
+    elif args.command == 'export':
+        cmd_export(args)
+
+
+if __name__ == '__main__':
+    main()
+
