@@ -1,0 +1,226 @@
+;; C 语言代码分析 TSG 规则
+;; 提取函数调用图和数据流图
+
+global FILE_PATH
+global FILE_NAME
+
+;; ===== 函数定义 =====
+
+(function_definition
+  declarator: (function_declarator
+    declarator: (identifier) @func_name
+    parameters: (parameter_list) @params)
+  body: (compound_statement) @body) {
+  
+  ;; 创建函数节点
+  node func_node
+  attr (func_node) node_type = "FUNCTION"
+  attr (func_node) name = (source-text @func_name)
+  attr (func_node) file_path = (FILE_PATH)
+  attr (func_node) start_line = (start-row @func_name)
+  attr (func_node) end_line = (end-row @body)
+  
+  ;; 扫描函数体中的调用
+  scan (source-text @body) {
+    
+    ;; 函数调用: func()
+    (call_expression
+      function: (identifier) @callee) {
+      
+      node callee_node
+      attr (callee_node) node_type = "FUNCTION_REF"
+      attr (callee_node) name = (source-text @callee)
+      
+      edge func_node -> callee_node
+      attr (func_node -> callee_node) edge_type = "CALLS"
+      attr (func_node -> callee_node) line = (start-row @callee)
+    }
+    
+    ;; 函数指针调用: (*func_ptr)()
+    (call_expression
+      function: (parenthesized_expression
+        (pointer_expression
+          (identifier) @func_ptr))) {
+      
+      node ptr_node
+      attr (ptr_node) node_type = "FUNCTION_REF"
+      attr (ptr_node) name = (source-text @func_ptr)
+      
+      edge func_node -> ptr_node
+      attr (func_node -> ptr_node) edge_type = "INDIRECT_CALL"
+      attr (func_node -> ptr_node) line = (start-row @func_ptr)
+    }
+    
+    ;; 结构体成员函数调用: obj->method()
+    (call_expression
+      function: (field_expression
+        argument: (_)
+        field: (field_identifier) @field_name)) {
+      
+      node field_node
+      attr (field_node) node_type = "FUNCTION_REF"
+      attr (field_node) name = (source-text @field_name)
+      
+      edge func_node -> field_node
+      attr (func_node -> field_node) edge_type = "METHOD_CALL"
+      attr (func_node -> field_node) line = (start-row @field_name)
+    }
+    
+    ;; 变量声明: int var = value;
+    (declaration
+      declarator: (init_declarator
+        declarator: (identifier) @var_name
+        value: (_) @value)) {
+      
+      node var_node
+      attr (var_node) node_type = "VARIABLE"
+      attr (var_node) name = (source-text @var_name)
+      attr (var_node) line = (start-row @var_name)
+      
+      edge func_node -> var_node
+      attr (func_node -> var_node) edge_type = "DEFINES"
+      attr (func_node -> var_node) line = (start-row @var_name)
+    }
+    
+    ;; 变量赋值: var = value;
+    (assignment_expression
+      left: (identifier) @var_name
+      right: (_) @value) {
+      
+      node assign_node
+      attr (assign_node) node_type = "VARIABLE"
+      attr (assign_node) name = (source-text @var_name)
+      attr (assign_node) line = (start-row @var_name)
+      
+      edge func_node -> assign_node
+      attr (func_node -> assign_node) edge_type = "ASSIGNS"
+      attr (func_node -> assign_node) line = (start-row @var_name)
+    }
+    
+    ;; return 语句
+    (return_statement
+      (_) @return_value) {
+      
+      node return_node
+      attr (return_node) node_type = "RETURN"
+      attr (return_node) line = (start-row @return_value)
+      
+      edge func_node -> return_node
+      attr (func_node -> return_node) edge_type = "RETURNS"
+      attr (func_node -> return_node) line = (start-row @return_value)
+    }
+  }
+}
+
+;; ===== 函数声明（原型） =====
+
+(declaration
+  declarator: (function_declarator
+    declarator: (identifier) @func_name
+    parameters: (parameter_list) @params)) {
+  
+  node func_decl
+  attr (func_decl) node_type = "FUNCTION_DECL"
+  attr (func_decl) name = (source-text @func_name)
+  attr (func_decl) file_path = (FILE_PATH)
+  attr (func_decl) line = (start-row @func_name)
+}
+
+;; ===== 结构体定义 =====
+
+(struct_specifier
+  name: (type_identifier) @struct_name
+  body: (field_declaration_list) @struct_body) {
+  
+  node struct_node
+  attr (struct_node) node_type = "STRUCT"
+  attr (struct_node) name = (source-text @struct_name)
+  attr (struct_node) file_path = (FILE_PATH)
+  attr (struct_node) start_line = (start-row @struct_name)
+  
+  ;; 扫描结构体成员
+  scan (source-text @struct_body) {
+    (field_declaration
+      declarator: (field_identifier) @field_name) {
+      
+      node field_node
+      attr (field_node) node_type = "FIELD"
+      attr (field_node) name = (source-text @field_name)
+      attr (field_node) line = (start-row @field_name)
+      
+      edge struct_node -> field_node
+      attr (struct_node -> field_node) edge_type = "CONTAINS"
+    }
+  }
+}
+
+;; ===== 宏定义 =====
+
+(preproc_function_def
+  name: (identifier) @macro_name
+  parameters: (preproc_params) @params
+  value: (_) @value) {
+  
+  node macro_node
+  attr (macro_node) node_type = "MACRO"
+  attr (macro_node) name = (source-text @macro_name)
+  attr (macro_node) line = (start-row @macro_name)
+}
+
+;; ===== include 语句 =====
+
+(preproc_include
+  path: (string_literal) @include_path) {
+  
+  node include_node
+  attr (include_node) node_type = "INCLUDE"
+  attr (include_node) name = (source-text @include_path)
+  attr (include_node) line = (start-row @include_path)
+}
+
+(preproc_include
+  path: (system_lib_string) @include_path) {
+  
+  node include_node
+  attr (include_node) node_type = "INCLUDE"
+  attr (include_node) name = (source-text @include_path)
+  attr (include_node) line = (start-row @include_path)
+}
+
+;; ===== 全局变量定义 =====
+
+(declaration
+  type: (_) @var_type
+  declarator: (identifier) @var_name) {
+  
+  node global_var
+  attr (global_var) node_type = "VARIABLE"
+  attr (global_var) name = (source-text @var_name)
+  attr (global_var) file_path = (FILE_PATH)
+  attr (global_var) line = (start-row @var_name)
+  attr (global_var) scope = "global"
+}
+
+;; ===== typedef 定义 =====
+
+(type_definition
+  declarator: (type_identifier) @type_name) {
+  
+  node typedef_node
+  attr (typedef_node) node_type = "TYPEDEF"
+  attr (typedef_node) name = (source-text @type_name)
+  attr (typedef_node) line = (start-row @type_name)
+}
+
+;; ===== 枚举定义 =====
+
+(enum_specifier
+  name: (type_identifier) @enum_name
+  body: (enumerator_list) @enum_body) {
+  
+  node enum_node
+  attr (enum_node) node_type = "ENUM"
+  attr (enum_node) name = (source-text @enum_name)
+  attr (enum_node) line = (start-row @enum_name)
+}
+
